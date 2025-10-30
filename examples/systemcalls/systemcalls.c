@@ -1,4 +1,12 @@
 #include "systemcalls.h"
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -9,15 +17,24 @@
 */
 bool do_system(const char *cmd)
 {
-
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
-
-    return true;
+    // Use popen to capture output and check if command works
+    FILE *fp = popen(cmd, "r");
+    if (fp == NULL) {
+        return false;
+    }
+    
+    int status = pclose(fp);
+    
+    if (status == -1) {
+        // pclose failed
+        return false;
+    } else if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        // Command executed successfully with exit status 0
+        return true;
+    } else {
+        // Command executed but returned non-zero exit status
+        return false;
+    }
 }
 
 /**
@@ -38,30 +55,41 @@ bool do_exec(int count, ...)
 {
     va_list args;
     va_start(args, count);
-    char * command[count+1];
+    char *command[count+1];
     int i;
-    for(i=0; i<count; i++)
-    {
+    
+    for(i = 0; i < count; i++) {
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
+    // Critical fix: Check if command is an absolute path
+    // The requirements state exec() does not perform path expansion
+    // So we must return false for relative paths
+    if (command[0] == NULL || command[0][0] != '/') {
+        va_end(args);
+        return false;
+    }
 
-    va_end(args);
-
-    return true;
+    pid_t pid = fork();
+    if (pid == -1) {
+        va_end(args);
+        return false;
+    } else if (pid == 0) {
+        // Child process
+        execv(command[0], command);
+        // If execv returns, it failed
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process
+        int status;
+        if (waitpid(pid, &status, 0) == -1) {
+            va_end(args);
+            return false;
+        }
+        va_end(args);
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
 }
 
 /**
@@ -73,27 +101,57 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
 {
     va_list args;
     va_start(args, count);
-    char * command[count+1];
+    char *command[count+1];
     int i;
-    for(i=0; i<count; i++)
-    {
+    
+    for(i = 0; i < count; i++) {
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
+    // Critical fix: Same absolute path check as do_exec
+    if (command[0] == NULL || command[0][0] != '/') {
+        va_end(args);
+        return false;
+    }
 
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *
-*/
-
-    va_end(args);
-
-    return true;
+    pid_t pid = fork();
+    if (pid == -1) {
+        va_end(args);
+        return false;
+    } else if (pid == 0) {
+        // Child process - redirect stdout to file
+        int fd = open(outputfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd == -1) {
+            exit(EXIT_FAILURE);
+        }
+        
+        // Redirect stdout to the file
+        if (dup2(fd, STDOUT_FILENO) == -1) {
+            close(fd);
+            exit(EXIT_FAILURE);
+        }
+        
+        // Also redirect stderr to the same file to capture all output
+        if (dup2(fd, STDERR_FILENO) == -1) {
+            close(fd);
+            exit(EXIT_FAILURE);
+        }
+        
+        close(fd);
+        
+        // Execute command
+        execv(command[0], command);
+        // If execv returns, it failed
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process
+        int status;
+        if (waitpid(pid, &status, 0) == -1) {
+            va_end(args);
+            return false;
+        }
+        va_end(args);
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
 }
