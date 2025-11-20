@@ -71,3 +71,8 @@ else
 	echo "failed: expected  ${MATCHSTR} in ${OUTPUTSTRING} but instead found"
 	exit 1
 fi
+writer
+finder.sh /tmp/alee/assignment-4-result.txt
+
+# Write assignment 4 result
+echo "Assignment 4 completed successfully" > /tmp/assignment4-result.txt
