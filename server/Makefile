@@ -1,21 +1,41 @@
-# Cross-compilation support
-CROSS_COMPILE ?=
-CC := $(CROSS_COMPILE)gcc
-CFLAGS := -Wall -Werror -Wextra
-TARGET := aesdsocket
+#
+# Makefile
+#
+# source: writer.c
+# target: writer
+#
 
-# Default target
+# option Crosscompile
+CROSS_COMPILE ?=
+
+# compiler and flags: -Wall, -Wextra -> show warnings, -g add debug information
+CC = $(CROSS_COMPILE)gcc
+CFLAGS = -Wall -Wextra -Werror -g
+
+# target
+TARGET = aesdsocket
+
+# source
+SRC = aesdsocket.c
+OBJ = aesdsocket.o
+
+# default
 all: $(TARGET)
 
-$(TARGET): aesdsocket.c
-	$(CC) $(CFLAGS) -o $(TARGET) aesdsocket.c
+# link object file
+$(TARGET): $(OBJ)
+	$(CC) $(CFLAGS) -o $@ $^
+        #$(CC) $(CFLAGS) $(INCLUDES) $(OBJS) -o $(TARGET) $(LDFLAGS)
 
+# compile source file 
+%.o:  %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# clean target
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) *.o
 
-# Install target for buildroot (you'll need this later)
-install: $(TARGET)
-	mkdir -p $(DESTDIR)/usr/bin
-	cp $(TARGET) $(DESTDIR)/usr/bin/
+# all, clean are no files
+.PHONY:  all clean
 
-.PHONY: all clean install
+
