@@ -9,11 +9,14 @@
 CROSS_COMPILE ?=
 
 # compiler and flags: -Wall, -Wextra -> show warnings, -g add debug information
-CC = $(CROSS_COMPILE)gcc
-CFLAGS = -Wall -Wextra -Werror -g
+CC ?= $(CROSS_COMPILE)gcc
+CFLAGS ?= -Wall -Wextra -Werror -g
+LDFLAGS ?= -lpthread -lrt
+
+INCLUDES ?=
 
 # target
-TARGET = aesdsocket
+TARGET ?= aesdsocket
 
 # source
 SRC = aesdsocket.c
@@ -23,9 +26,9 @@ OBJ = aesdsocket.o
 all: $(TARGET)
 
 # link object file
+# $(CC) $(CFLAGS) $(INCLUDES) $(OBJS) -o $(TARGET) $(LDFLAGS)
 $(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $^
-        #$(CC) $(CFLAGS) $(INCLUDES) $(OBJS) -o $(TARGET) $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(INCLUDES) $(LDFLAGS)
 
 # compile source file 
 %.o:  %.c
