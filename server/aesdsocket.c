@@ -23,6 +23,7 @@
 #include <time.h>
 
 
+#define USE_AESD_CHAR_DEVICE  1
 
 #define PORT "9000"  // the port users will be connecting to
 
@@ -37,9 +38,13 @@
 
 const char* server_name = "aesdsocket";
 
-const char* savefile_name = "/var/tmp/aesdsocketdata";
-
-
+//const char* savefile_name = "/var/tmp/aesdsocketdata";
+const char* savefile_name = 
+#if USE_AESD_CHAR_DEVICE != 1
+                              "/var/tmp/aesdsocketdata";
+#else
+                              "/dev/aesdchar";
+#endif
 
 int server_fd;
 pthread_t timer_thread_id;
@@ -133,8 +138,12 @@ void *timer_thread(void* arg)
         strftime(date_buf, sizeof(date_buf), "timestamp:%a %d %b %H:%M:%S %Y", tm_info);
         //strftime(date_buf, sizeof(date_buf), "timestamp:%Y-%d-%b %H:%M:%S.  %z", tm_info);
 
+
+#if USE_AESD_CHAR_DEVICE != 1
+
         // write to file with locking        
         pthread_mutex_lock(&file_mutex);
+
         FILE *wp = fopen(savefile_name,"a");
         if ( wp ) {
    
@@ -185,6 +194,7 @@ void *timer_thread(void* arg)
         }
         
         pthread_mutex_unlock(&file_mutex);
+#endif
     
 #ifdef use_MONOLITIC       
 
