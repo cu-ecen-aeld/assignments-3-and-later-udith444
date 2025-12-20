@@ -18,6 +18,8 @@
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
+
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
@@ -79,34 +81,34 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     {
         // Nr of bytes to copy
         size_t cpy_bytes =  pEntry->size - b_start;
-                          
+
         // any limitations on amount of receive buffer
         if ( (totcpy + cpy_bytes) > count ) 
         {
             // only the remaining nrs
             cpy_bytes = count - totcpy;
         }
-        
-        // copy to userspace 
+
+        // copy to userspace
         if (copy_to_user(buf + totcpy, pEntry->buffptr + b_start, cpy_bytes)) {
 	    retval = -EFAULT;
 	    goto out;
-	}         
+	}
 
         // pointer to next bufferentry
-        b_fpos += cpy_bytes;          
-         
-        // amount of bytes copied 
+        b_fpos += cpy_bytes;
+
+        // amount of bytes copied
         totcpy += cpy_bytes;
         // exceeds the limit of userbuffer
         if ( totcpy >= count) {
              break;
         }
     }
-    
+
     *f_pos += totcpy;
-    
-    retval = totcpy;  
+
+    retval = totcpy;
 
 out:
     mutex_unlock(&dev->lock);
@@ -141,7 +143,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         {
             rcount += dev->tmpDataSize;
 
-            char *kmem = kmalloc(rcount + 1, GFP_KERNEL);   // alloc additional mem
+            kmem = kmalloc(rcount + 1, GFP_KERNEL);   // alloc additional mem
             
             if (kmem == NULL)
                 goto out;
@@ -157,7 +159,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
             dev->tmpDataSize = rcount;
         }
         else {
-            char *kmem = kmalloc(count + 1, GFP_KERNEL);
+            kmem = kmalloc(count + 1, GFP_KERNEL);
   
             if (kmem == NULL)
                 goto out;
@@ -216,11 +218,124 @@ out:
 
     return retval;
 }
+
+/*
+ * The "extended" operations
+ */
+
+loff_t aesd_llseek (struct file *filp, loff_t off, int whence)
+{
+    struct aesd_dev *dev = filp->private_data;
+    loff_t newpos;
+
+    switch(whence) {
+    case 0: /* SEEK_SET */
+ 	newpos = off;
+        break;
+
+    case 1: /* SEEK_CUR */
+	newpos = filp->f_pos + off;
+	break;
+
+    case 2: /* SEEK_END */
+        // get size of cmds
+        int nEntries = (dev->data.full ) ? AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED : 
+                       ((dev->data.in_offs - dev->data.out_offs + AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED);
+        
+        newpos = 0;
+        int out_ind = dev->data.out_offs;
+        for (int i=0; i < nEntries; i++ ) {
+            newpos += dev->data.entry[out_ind].size;
+            out_ind = (out_ind + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        }
+	newpos += off;
+	break;
+
+    default: /* can't happen */
+	return -EINVAL;
+    }
+    
+    if (newpos<0) 
+        return -EINVAL;
+	
+    filp->f_pos = newpos;
+
+    return newpos;
+}
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    struct aesd_dev *dev = filp->private_data;
+    struct aesd_seekto req;
+    loff_t newpos;
+    int retval = -ENOTTY;
+   
+   PDEBUG("ioctl cmd %d (%d) arg %ld ", cmd, AESDCHAR_IOCSEEKTO, arg);
+   
+    if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC) 
+        return -ENOTTY;
+    if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR) 
+        return -ENOTTY;
+
+    if (mutex_lock_interruptible(&dev->lock))
+        return -ERESTARTSYS;    
+   
+    switch(cmd) {
+   
+        case AESDCHAR_IOCSEEKTO:
+       
+           if (copy_from_user(&req, (void __user *)arg, sizeof(req))) {
+               retval =  -EFAULT;
+               goto unlock;
+           }
+               
+           
+           int nEntries = (dev->data.full ) ? AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED : 
+                       ((dev->data.in_offs - dev->data.out_offs + AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED);
+           
+           if ( req.write_cmd >= nEntries ) {
+                retval -EINVAL;
+                goto unlock;
+           }
+           
+           newpos = 0;
+           int outPtr = dev->data.out_offs;
+           
+           for (int i=0 ; i < req.write_cmd; i++ ) {
+               newpos += dev->data.entry[outPtr].size;
+               outPtr = (outPtr + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+           }
+           newpos += req.write_cmd_offset;
+           
+           if (req.write_cmd_offset >= dev->data.entry[outPtr].size) {
+                PDEBUG("ioctl: Size=%d Newpos=%d outPtr=%d ", dev->data.entry[outPtr].size, outPtr);
+                retval = -EINVAL;
+                goto unlock;
+           }
+           
+           filp->f_pos = newpos;
+             
+           retval = 0;
+           
+           break;
+       default:
+           retval = -ENOTTY;
+   
+   }   // switch (cmd)
+
+unlock:    
+    mutex_unlock(&dev->lock);
+    
+    return retval; 
+}
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
     .write =    aesd_write,
     .open =     aesd_open,
+    .llseek =   aesd_llseek,
+    .unlocked_ioctl = aesd_ioctl,
     .release =  aesd_release,
 };
 

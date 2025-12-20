@@ -22,6 +22,7 @@
 #include <pthread.h>
 #include <time.h>
 
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #define USE_AESD_CHAR_DEVICE  1
 
@@ -45,6 +46,8 @@ const char* savefile_name =
 #else
                               "/dev/aesdchar";
 #endif
+
+#define SEEK_STR "AESDCHAR_IOCSEEKTO:"
 
 int server_fd;
 pthread_t timer_thread_id;
@@ -280,7 +283,7 @@ void handle_shutdown(int signo)
 /*
  *  respond to pair
  */
-int respond(int client_fd)
+int respond(int client_fd, int cmd_offs, int cmd_ind)
 {
     // Answer on received string
  
@@ -302,6 +305,24 @@ int respond(int client_fd)
         return -2;
     }
 
+    if (cmd_offs >= 0 && cmd_ind >= 0 ) {
+        // offset given
+        
+        struct aesd_seekto seekto;
+        
+        seekto.write_cmd = cmd_offs;
+        seekto.write_cmd_offset = cmd_ind;
+        
+        if ( ioctl(fileno(fp), AESDCHAR_IOCSEEKTO, &seekto) ) {
+            pthread_mutex_unlock(&file_mutex);
+
+            pthread_mutex_lock(&syslog_mutex);
+            syslog(LOG_DEBUG, "-> respond fopen(fp) == NULL" );
+            pthread_mutex_unlock(&syslog_mutex);
+            return -2;
+        }
+        
+    }
     // read file line by line
     while(fgets(readfile_buffer, BUFFER_SIZE , fp) != NULL) {
         
@@ -387,6 +408,22 @@ void remove_client_nodes(struct thread_data_s * node)
 }
 
 
+int isSeek(char *recstr, int* pcmd, int* poff)
+{
+    if (!strncmp(recstr,  SEEK_STR, strlen(SEEK_STR) ) ) {
+        // get cmd offset, and offset
+        
+        char* rec_int_off = recstr + strlen(SEEK_STR);
+           
+        if ( sscanf( rec_int_off, " %d , %d ", pcmd, poff) == 2 ) {
+           
+           return 1;
+        }
+                    
+    }
+    return 0;
+}           
+
 /*
  * Socket Client thread
  */
@@ -433,54 +470,65 @@ void *client_thread(void* arg)
             recv_buffer[total] = '\0';
         }
         
+        int cmd_offs = -1;
+        int cmd_ind = -1;
+        
         // LF received?
         if (recv_buffer != NULL && strchr(recv_buffer, '\n') != NULL) {
         
             // recv_buffer should not be NULL if variable total is > 0
             if  (total > 0 && recv_buffer != NULL) {
+            
+                //  AESDCHAR_IOCSEEKTO:X,Y
+                if ( isSeek(recv_buffer, &cmd_offs, &cmd_ind) == 1  ) {
+                    // get cmd offset, and offset
+                                    
+                   
+                }
+                else {
 
-                pthread_mutex_lock(&file_mutex);                 /// lock file_mutex
+                    pthread_mutex_lock(&file_mutex);                 /// lock file_mutex
                 
-                // open save-file in append mode
-                FILE* wp = fopen(savefile_name, "a");
-                if (wp == NULL) {
-                    // error open file
-                    pthread_mutex_unlock(&file_mutex);
+                    // open save-file in append mode
+                    FILE* wp = fopen(savefile_name, "a");
+                    if (wp == NULL) {
+                        // error open file
+                        pthread_mutex_unlock(&file_mutex);
 
-                    pthread_mutex_lock(&syslog_mutex);
-                    syslog(LOG_DEBUG, "-> client_thread fopen(wp) == NULL" );
-                    pthread_mutex_unlock(&syslog_mutex);
-                    n = -2;  // show error condition
-                    break;
+                        pthread_mutex_lock(&syslog_mutex);
+                        syslog(LOG_DEBUG, "-> client_thread fopen(wp) == NULL" );
+                        pthread_mutex_unlock(&syslog_mutex);
+                        n = -2;  // show error condition
+                        break;
+                    }
+
+                    // write to save-file
+                    if (fprintf(wp,"%s", recv_buffer) < 0) {
+                        // error write string
+                        fclose(wp);
+                        pthread_mutex_unlock(&file_mutex);
+
+                        pthread_mutex_lock(&syslog_mutex);
+                        syslog(LOG_DEBUG, "-> client_thread fprintf(wp) < 0" );
+                        pthread_mutex_unlock(&syslog_mutex);
+                        n = -2;   // show error condition
+                        break;
+                    }
+
+                    // close save-file
+                    if (fclose(wp) == -1) {
+                        // error on fclose()
+                        pthread_mutex_unlock(&file_mutex);
+
+                        pthread_mutex_lock(&syslog_mutex);
+                        syslog(LOG_DEBUG, "-> client_thread fclose(wp)" );
+                        pthread_mutex_unlock(&syslog_mutex);
+                        n = -2;   // show error condition
+                        break;
+                    }
+
+                    pthread_mutex_unlock(&file_mutex);                   // unlock file_mutex
                 }
-
-                // write to save-file
-                if (fprintf(wp,"%s", recv_buffer) < 0) {
-                    // error write string
-                    fclose(wp);
-                    pthread_mutex_unlock(&file_mutex);
-
-                    pthread_mutex_lock(&syslog_mutex);
-                    syslog(LOG_DEBUG, "-> client_thread fprintf(wp) < 0" );
-                    pthread_mutex_unlock(&syslog_mutex);
-                    n = -2;   // show error condition
-                    break;
-                }
-
-                // close save-file
-                if (fclose(wp) == -1) {
-                    // error on fclose()
-                    pthread_mutex_unlock(&file_mutex);
-
-                    pthread_mutex_lock(&syslog_mutex);
-                    syslog(LOG_DEBUG, "-> client_thread fclose(wp)" );
-                    pthread_mutex_unlock(&syslog_mutex);
-                    n = -2;   // show error condition
-                    break;
-                }
-
-                pthread_mutex_unlock(&file_mutex);                   // unlock file_mutex
-
                 // recv_buffer content no longer necessary
                 free(recv_buffer);
                 recv_buffer = NULL;
@@ -488,7 +536,7 @@ void *client_thread(void* arg)
                     
        
                 // Respond to client
-       	        if ((res = respond(client_fd)) != 0 ) {
+       	        if ((res = respond(client_fd, cmd_offs, cmd_ind)) != 0 ) {
        	            n = res;
        	            break;
        	        }
