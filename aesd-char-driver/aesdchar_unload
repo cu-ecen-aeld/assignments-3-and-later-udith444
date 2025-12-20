@@ -8,3 +8,4 @@ rmmod $module || exit 1
 # Remove stale nodes
 
 rm -f /dev/${device}
+
