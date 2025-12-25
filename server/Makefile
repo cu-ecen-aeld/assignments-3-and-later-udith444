@@ -1,44 +1,20 @@
-#
-# Makefile
-#
-# source: writer.c
-# target: writer
-#
+CC ?= $(CROSS_COMPILE) gcc
+CFLAGS ?=-Wall  -O0
+LDFLAGS ?= 
+ARGS ?= -I../aesd-char-driver
+all: aesdsocket
 
-# option Crosscompile
-CROSS_COMPILE ?=
+default: aesdsocket
 
-# compiler and flags: -Wall, -Wextra -> show warnings, -g add debug information
-CC ?= $(CROSS_COMPILE)gcc
-CFLAGS ?= -Wall -Wextra -Werror -g
-LDFLAGS ?= -lpthread -lrt
+debug: aesdsocket.c 
+	$(CC) $(CFLAGS) $(ARGS) aesdsocket.c -o aesdsocket $(LDFLAGS)
 
-INCLUDES ?=
 
-# target
-TARGET ?= aesdsocket
+aesdsocket: aesdsocket.c 
+	$(CC) $(CFLAGS) $(ARGS) aesdsocket.c -o aesdsocket $(LDFLAGS)
 
-# source
-SRC = aesdsocket.c
-OBJ = aesdsocket.o
 
-# default
-all: $(TARGET)
-
-# link object file
-# $(CC) $(CFLAGS) $(INCLUDES) $(OBJS) -o $(TARGET) $(LDFLAGS)
-$(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) $^ -o $@ $(INCLUDES) $(LDFLAGS)
-
-# compile source file 
-%.o:  %.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# clean target
-clean:
-	rm -f $(TARGET) *.o
-
-# all, clean are no files
-.PHONY:  all clean
+clean: 
+	rm -f *.o aesdsocket
 
 
