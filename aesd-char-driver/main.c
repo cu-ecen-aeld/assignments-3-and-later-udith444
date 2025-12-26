@@ -28,8 +28,11 @@
 #define AESDCHAR_MAX_CIRCULAR_BUFFER_SIZE 10
 #endif
 
-MODULE_AUTHOR("vinod1257");
-MODULE_LICENSE("Dual BSD/GPL");
+#ifndef AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED
+#define AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED AESDCHAR_MAX_CIRCULAR_BUFFER_SIZE
+#endif
+
+
 
 int aesd_major = 0;
 int aesd_minor = 0;
@@ -392,15 +395,36 @@ static loff_t aesd_llseek(struct file *filp, loff_t offset, int whence) {
     struct aesd_dev *dev = filp->private_data;
     loff_t new_pos = 0;
     size_t total_size = 0;
-    int i;
-
-    // Calculate total size of all commands in the circular buffer
-    for (i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++) {
-        if (dev->circ_buf.entry[i].size > 0) {
-            total_size += dev->circ_buf.entry[i].size;
+    unsigned int idx;
+    unsigned int traversed = 0;
+    
+    if (!dev)
+        return -EINVAL;
+    
+    if (mutex_lock_interruptible(&dev->lock))
+        return -ERESTARTSYS;
+    
+    // Calculate total size properly by traversing the circular buffer
+    idx = dev->circ_buf.out_offs;
+    while (traversed < AESDCHAR_MAX_CIRCULAR_BUFFER_SIZE) {
+        struct aesd_buffer_entry *e = &dev->circ_buf.entry[idx];
+        if (e->buffptr) {
+            total_size += e->size;
         }
+        
+        // Check if we should stop
+        if (!dev->circ_buf.full && idx == dev->circ_buf.in_ops)
+            break;
+            
+        idx = (idx + 1) % AESDCHAR_MAX_CIRCULAR_BUFFER_SIZE;
+        traversed++;
+        
+        if (idx == dev->circ_buf.out_offs && dev->circ_buf.full)
+            break;
     }
-
+    
+    mutex_unlock(&dev->lock);
+    
     switch (whence) {
         case SEEK_SET:
             new_pos = offset;
@@ -414,13 +438,86 @@ static loff_t aesd_llseek(struct file *filp, loff_t offset, int whence) {
         default:
             return -EINVAL;
     }
-
+    
     if (new_pos < 0 || new_pos > total_size) {
         return -EINVAL;
     }
-
+    
     filp->f_pos = new_pos;
     return new_pos;
+}
+
+static long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
+    struct aesd_dev *dev = filp->private_data;
+    struct aesd_seekto seekto;
+    size_t total_offset = 0;
+    unsigned int idx;
+    unsigned int traversed = 0;
+    
+    if (!dev)
+        return -EINVAL;
+    
+    if (cmd != AESDCHAR_IOCSEEKTO) {
+        return -EINVAL;
+    }
+    
+    if (copy_from_user(&seekto, (void __user *)arg, sizeof(seekto))) {
+        return -EFAULT;
+    }
+    
+    if (mutex_lock_interruptible(&dev->lock))
+        return -ERESTARTSYS;
+    
+    // Validate seekto.write_cmd is within valid range
+    if (seekto.write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+    
+    // Traverse the circular buffer to find the target entry
+    idx = dev->circ_buf.out_offs;
+    while (traversed < AESDCHAR_MAX_CIRCULAR_BUFFER_SIZE) {
+        struct aesd_buffer_entry *e = &dev->circ_buf.entry[idx];
+        
+        if (!e->buffptr) {
+            mutex_unlock(&dev->lock);
+            return -EINVAL;  // Entry doesn't exist
+        }
+        
+        // If we've reached the target write_cmd index
+        if (traversed == seekto.write_cmd) {
+            if (seekto.write_cmd_offset >= e->size) {
+                mutex_unlock(&dev->lock);
+                return -EINVAL;
+            }
+            
+            // Found the target entry, calculate total offset
+            total_offset += seekto.write_cmd_offset;
+            mutex_unlock(&dev->lock);
+            
+            pr_info("AESDCHAR_IOCSEEKTO:%u,%u -> f_pos=%zu\n", 
+                    seekto.write_cmd, seekto.write_cmd_offset, total_offset);
+            
+            filp->f_pos = total_offset;
+            return 0;
+        }
+        
+        // Not the target yet, add its size to the offset
+        total_offset += e->size;
+        
+        // Move to next entry
+        if (!dev->circ_buf.full && idx == dev->circ_buf.in_ops)
+            break;
+            
+        idx = (idx + 1) % AESDCHAR_MAX_CIRCULAR_BUFFER_SIZE;
+        traversed++;
+        
+        if (idx == dev->circ_buf.out_offs && dev->circ_buf.full)
+            break;
+    }
+    
+    mutex_unlock(&dev->lock);
+    return -EINVAL;  // Requested write_cmd index not found
 }
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
@@ -435,39 +532,6 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
     printk(KERN_ERR "Error %d adding aesd cdev", err);
   }
   return err;
-}
-
-static long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
-    struct aesd_dev *dev = filp->private_data;
-    struct aesd_seekto seekto;
-    size_t command_offset, byte_offset;
-    size_t total_offset = 0;
-    int i;
-
-    if (cmd != AESDCHAR_IOCSEEKTO) {
-        return -EINVAL;
-    }
-
-    if (copy_from_user(&seekto, (void __user *)arg, sizeof(seekto))) {
-        return -EFAULT;
-    }
-
-    if (seekto.write_cmd >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED ||
-        seekto.write_cmd_offset >= dev->circ_buf.entry[seekto.write_cmd].size) {
-        return -EINVAL;
-    }
-
-    pr_debug("AESDCHAR_IOCSEEKTO: write_cmd=%u, write_cmd_offset=%u\n",
-             seekto.write_cmd, seekto.write_cmd_offset);
-
-    for (i = 0; i < seekto.write_cmd; i++) {
-        total_offset += dev->circ_buf.entry[i].size;
-    }
-    total_offset += seekto.write_cmd_offset;
-
-    pr_debug("Updated file pointer to offset=%zu\n", total_offset);
-    filp->f_pos = total_offset;
-    return 0;
 }
 
 int aesd_init_module(void)
