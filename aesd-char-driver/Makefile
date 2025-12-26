@@ -23,9 +23,6 @@ PWD       := $(shell pwd)
 modules:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
 
-# Explicitly add dependency for aesd_ioctl.h
-main.o: aesd_ioctl.h
-
 endif
 
 clean:

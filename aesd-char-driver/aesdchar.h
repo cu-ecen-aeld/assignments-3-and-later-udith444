@@ -5,28 +5,33 @@
  *      Author: Dan Walkes
  */
 
-#ifndef AESDCHAR_H
-#define AESDCHAR_H
+#ifndef AESD_CHAR_DRIVER_AESDCHAR_H_
+#define AESD_CHAR_DRIVER_AESDCHAR_H_
 
-#include <linux/cdev.h>
-#include <linux/mutex.h>
 #include "aesd-circular-buffer.h"
+#include <linux/rwsem.h> /* for rw_semaphore */
 
-#define AESDCHAR_MAX_WRITE 1024
+#define AESD_DEBUG 1  //Remove comment on this line to enable debug
 
-/* TODO: add any defines you need */
+#undef PDEBUG             /* undef it, just in case */
+#ifdef AESD_DEBUG
+#  ifdef __KERNEL__
+     /* This one if debugging is on, and kernel space */
+#    define PDEBUG(fmt, args...) printk( KERN_DEBUG "aesdchar: " fmt, ## args)
+#  else
+     /* This one for user space */
+#    define PDEBUG(fmt, args...) fprintf(stderr, fmt, ## args)
+#  endif
+#else
+#  define PDEBUG(fmt, args...) /* not debugging: nothing */
+#endif
 
-/* Device structure for this driver */
 struct aesd_dev {
-    struct cdev cdev;                     /* Char device structure */
-    struct aesd_circular_buffer circ_buf; /* Circular buffer of entries */
-    struct mutex lock;                    /* Mutex to protect the buffer */
-
-    /* buffer for an in-progress (unterminated) write */
-    char *write_buf;                      /* accumulated bytes for current write */
-    size_t write_buf_size;                /* number of bytes stored in write_buf */
-
-    /* TODO: add any other device-specific fields you need */
+    struct aesd_buffer_entry cache;
+    struct aesd_circular_buffer circular_buffer;
+    struct rw_semaphore rwsem; /* read/write lock: multiple readers, single writer */
+    struct cdev cdev;     /* Char device structure      */
 };
 
-#endif /* AESDCHAR_H */
+
+#endif /* AESD_CHAR_DRIVER_AESDCHAR_H_ */

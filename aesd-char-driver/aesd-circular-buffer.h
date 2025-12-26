@@ -10,27 +10,13 @@
 
 #ifdef __KERNEL__
 #include <linux/types.h>
-#include <linux/slab.h>
-#include <linux/string.h>
-#include <linux/kernel.h>
-#include <linux/printk.h>
 #else
 #include <stddef.h> // size_t
 #include <stdint.h> // uintx_t
 #include <stdbool.h>
-#include <string.h>
-#include <stdio.h>   
 #endif
 
-/* Make a single canonical macro name and keep older name as alias if present */
-#ifndef AESDCHAR_MAX_CIRCULAR_BUFFER_SIZE
-#define AESDCHAR_MAX_CIRCULAR_BUFFER_SIZE 10   /* or whatever your desired value is */
-#endif
-
-/* keep older name alias for compatibility */
-#ifndef AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED
-#define AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED AESDCHAR_MAX_CIRCULAR_BUFFER_SIZE
-#endif
+#define AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED 10
 
 struct aesd_buffer_entry
 {
@@ -42,6 +28,8 @@ struct aesd_buffer_entry
      * Number of bytes stored in buffptr
      */
     size_t size;
+
+    size_t allocated;
 };
 
 struct aesd_circular_buffer
@@ -63,6 +51,8 @@ struct aesd_circular_buffer
      * set to true when the buffer entry structure is full
      */
     bool full;
+
+    bool empty;
 };
 
 extern struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
