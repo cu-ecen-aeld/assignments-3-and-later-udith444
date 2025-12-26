@@ -5,40 +5,28 @@
  *      Author: Dan Walkes
  */
 
-#ifndef AESD_CHAR_DRIVER_AESDCHAR_H_
-#define AESD_CHAR_DRIVER_AESDCHAR_H_
+#ifndef AESDCHAR_H
+#define AESDCHAR_H
 
+#include <linux/cdev.h>
+#include <linux/mutex.h>
 #include "aesd-circular-buffer.h"
 
-#define AESD_DEBUG 1  //Remove comment on this line to enable debug
+#define AESDCHAR_MAX_WRITE 1024
 
-#undef PDEBUG             /* undef it, just in case */
-#ifdef AESD_DEBUG
-#  ifdef __KERNEL__
-     /* This one if debugging is on, and kernel space */
-#    define PDEBUG(fmt, args...) printk( KERN_DEBUG "aesdchar: " fmt, ## args)
-#  else
-     /* This one for user space */
-#    define PDEBUG(fmt, args...) fprintf(stderr, fmt, ## args)
-#  endif
-#else
-#  define PDEBUG(fmt, args...) /* not debugging: nothing */
-#endif
+/* TODO: add any defines you need */
 
-struct aesd_dev
-{
-    /**
-     * TODO: Add structure(s) and locks needed to complete assignment requirements
-     */
-    struct aesd_circular_buffer data;  // we pointer to Circlebuffer data 
- 
-    char*  tmpData;  			// we temp received data
-    size_t tmpDataSize;
+/* Device structure for this driver */
+struct aesd_dev {
+    struct cdev cdev;                     /* Char device structure */
+    struct aesd_circular_buffer circ_buf; /* Circular buffer of entries */
+    struct mutex lock;                    /* Mutex to protect the buffer */
 
-    struct mutex lock;     /* we mutual exclusion semaphore     */
-    struct cdev cdev;     /* Char device structure      */
+    /* buffer for an in-progress (unterminated) write */
+    char *write_buf;                      /* accumulated bytes for current write */
+    size_t write_buf_size;                /* number of bytes stored in write_buf */
+
+    /* TODO: add any other device-specific fields you need */
 };
 
-
-#endif /* AESD_CHAR_DRIVER_AESDCHAR_H_ */
-
+#endif /* AESDCHAR_H */
